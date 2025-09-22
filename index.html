@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Vokabeltrainer — Deutsch → Englisch</title>
+  <meta name="description" content="Einzelne Datei: index.html — Vokabeltrainer Deutsch→Englisch, offline + sync via Import/Export" />
+  <!--
+    Single-file Vokabeltrainer (index.html)
+    - Vanilla JS, inline CSS & JS
+    - Läuft als GitHub Pages site (lege `vokabeln.json` in denselben Ordner wie index.html)
+    - Unterstützt Import aus JSON / Markdown / TXT (einfache Parser)
+    - Speichert Fortschritt in localStorage (progress.json Export/Import)
+    - Passwortschutz optional
+    - Konfetti per Canvas
+  -->
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#60a5fa;--success:#34d399;--danger:#fb7185}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,'Helvetica Neue',Arial; margin:0; background:linear-gradient(180deg,#071025 0%, #071a2b 60%); color:#e6eef8; display:flex; align-items:center; justify-content:center; padding:20px}
+    .container{width:100%;max-width:980px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}
+    h1{font-size:20px;margin:0}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:14px;border-radius:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
+    .main{display:grid;grid-template-columns:1fr 360px;gap:14px}
+    @media (max-width:900px){.main{grid-template-columns:1fr} .right{order:2}}
+    .left{min-height:360px}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    .prompt{font-size:28px;font-weight:600;margin:10px 0}
+    input[type=text]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit;font-size:16px}
+    .btn{background:var(--accent);color:#04263b;padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+    .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+    .small{font-size:13px;padding:6px 8px}
+    .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .score{font-weight:700;color:var(--success)}
+    .badge-list{display:flex;gap:8px;flex-wrap:wrap}
+    .badge{background:rgba(255,255,255,0.04);padding:6px 8px;border-radius:999px;font-size:13px}
+    .section-select{display:flex;gap:8px;align-items:center}
+    textarea{width:100%;min-height:120px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .log{font-size:13px;color:var(--muted);margin-top:8px}
+    footer{margin-top:12px;color:var(--muted);font-size:13px}
+    .confetti-canvas{position:fixed;left:0;top:0;pointer-events:none;z-index:9999}
+    .help-modal{position:fixed;inset:0;background:rgba(2,6,23,0.7);display:flex;align-items:center;justify-content:center;padding:20px}
+    .help-inner{max-width:840px;width:100%;background:var(--card);padding:18px;border-radius:12px}
+    .flex-col{display:flex;flex-direction:column}
+    .right{display:flex;flex-direction:column;gap:10px}
+    .panel{padding:12px;border-radius:10px;background:rgba(255,255,255,0.02)}
+    .list{max-height:180px;overflow:auto}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <canvas id="confetti" class="confetti-canvas"></canvas>
+  <div class="container">
+    <header>
+      <h1>Vokabeltrainer <span class="muted">Deutsch → Englisch</span></h1>
+      <div class="controls">
+        <button id="helpBtn" class="btn small">Hilfe</button>
+        <button id="importVokBtn" class="btn ghost small">Vokabeln importieren</button>
+        <button id="exportProgressBtn" class="btn small">Export progress.json</button>
+        <button id="importProgressBtn" class="btn ghost small">Import progress.json</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="left card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="meta">
+              <div>Section: <strong id="currentSection">Alle</strong></div>
+              <div>Offen: <strong id="remainingCount">-</strong></div>
+              <div>Punkte: <span id="score" class="score">0</span></div>
+            </div>
+            <div class="badge-list" id="badges"></div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted">Passwort (optional)</div>
+            <input id="passwordToggle" placeholder="Passwort entfernen/setzen" type="text" style="width:200px;font-size:13px" />
+          </div>
+        </div>
+
+        <hr style="opacity:0.06;margin:12px 0" />
+
+        <label for="sectionSelect">Section wählen</label>
+        <div class="section-select">
+          <select id="sectionSelect" style="flex:1;padding:8px;border-radius:8px;background:transparent;color:inherit;border:1px solid rgba(255,255,255,0.04)"></select>
+          <button id="startBtn" class="btn">Start</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="prompt" id="promptDe">Drücke Start</div>
+          <label for="answerInput">Deutsche → Englische Übersetzung</label>
+          <input id="answerInput" type="text" autocomplete="off" />
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="checkBtn" class="btn">Prüfen</button>
+            <button id="skipBtn" class="btn ghost">Überspringen</button>
+            <button id="showBtn" class="btn ghost">Antwort zeigen</button>
+          </div>
+          <div class="log" id="feedback"></div>
+        </div>
+
+      </div>
+
+      <aside class="right">
+        <div class="panel card">
+          <h3 style="margin:0 0 8px 0">Vokabeldatei</h3>
+          <div class="muted">Standard: vokabeln.json (im selben Ordner wie index.html)</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="fileInput" type="file" accept=".json,.md,.txt" />
+            <button id="loadDefaultBtn" class="btn small">Lokal laden</button>
+          </div>
+          <div class="list" id="vocabPreview" style="margin-top:8px"></div>
+        </div>
+
+        <div class="panel card">
+          <h3 style="margin:0 0 8px 0">Einstellungen</h3>
+          <label>Levenshtein-Toleranz (Standard ≤1)</label>
+          <input id="levTolerance" type="number" min="0" max="5" value="1" />
+          <label style="margin-top:8px">Groß-/Kleinschreibung kontrollieren</label>
+          <select id="caseSensitive"><option value="1">Ja (case-sensitive)</option><option value="0">Nein (case-insensitive)</option></select>
+        </div>
+
+        <div class="panel card">
+          <h3 style="margin:0 0 8px 0">Fortschritt & Backup</h3>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button id="downloadProgress" class="btn small">Download</button>
+            <input id="progressInput" type="file" accept="application/json" />
+          </div>
+          <div class="muted">Automatische Speicherung: localStorage</div>
+        </div>
+
+      </aside>
+    </div>
+
+    <footer>
+      <div class="muted">Keine externen Bibliotheken • Responsive • Accessibility: Enter bestätigt • Fokus auf Eingabefeld</div>
+    </footer>
+  </div>
+
+  <!-- Hilfe Modal (versteckt) -->
+  <div id="helpModal" class="help-modal" style="display:none">
+    <div class="help-inner card">
+      <h2>Hilfe & Formate</h2>
+      <p>Importformate:
+        <ul>
+          <li><strong>JSON</strong> — Liste von Objekten: {"de":"Apfel","en":"apple","section":"Obst","example":"Ich esse einen ___."}</li>
+          <li><strong>Markdown</strong> — einfache Parser: zeilen mit `- de: ... | en: ... | section: ...` oder Tabellen im einfachen Format.</li>
+          <li><strong>TXT</strong> — je Zeile: <code>de<TAB>en<TAB>section<TAB>example</code> oder <code>de - en - section</code></li>
+        </ul>
+      </p>
+      <h3>Sync & Sicherheit</h3>
+      <p>Der Trainer speichert automatisch in <code>localStorage</code>. Exportiere <code>progress.json</code> zum Backup oder um auf einem anderen Gerät zu importieren.
+      Passwortschutz ist rein clientseitig (verschlüsselt nicht wirklich) — nützlich für ein einfaches Hindernis, aber nicht für starke Sicherheit.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button id="closeHelp" class="btn">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // === Globals & Defaults ===
+    const DEFAULT_VOCAB_FILE = 'vokabeln.json'; // expected to be in same folder as index.html
+    const STORAGE_KEY = 'vocab_trainer_progress_v1';
+    const DEFAULT_LEV_TOL = 1;
+
+    // State
+    let vocab = []; // array of {de,en,section,example}
+    let queue = []; // indices for current section queue
+    let progress = { score:0, errors:{}, badges:[], completedSections:[] };
+    let currentIdx = null; // index into vocab
+    let settings = { levTolerance:1, caseSensitive:true, password:null };
+
+    // DOM
+    const promptDe = document.getElementById('promptDe');
+    const answerInput = document.getElementById('answerInput');
+    const checkBtn = document.getElementById('checkBtn');
+    const skipBtn = document.getElementById('skipBtn');
+    const showBtn = document.getElementById('showBtn');
+    const startBtn = document.getElementById('startBtn');
+    const sectionSelect = document.getElementById('sectionSelect');
+    const remainingCount = document.getElementById('remainingCount');
+    const scoreEl = document.getElementById('score');
+    const feedback = document.getElementById('feedback');
+    const badgesEl = document.getElementById('badges');
+    const fileInput = document.getElementById('fileInput');
+    const loadDefaultBtn = document.getElementById('loadDefaultBtn');
+    const vocabPreview = document.getElementById('vocabPreview');
+    const levTolerance = document.getElementById('levTolerance');
+    const caseSensitive = document.getElementById('caseSensitive');
+    const helpBtn = document.getElementById('helpBtn');
+    const helpModal = document.getElementById('helpModal');
+    const closeHelp = document.getElementById('closeHelp');
+    const importVokBtn = document.getElementById('importVokBtn');
+    const exportProgressBtn = document.getElementById('exportProgressBtn');
+    const importProgressBtn = document.getElementById('importProgressBtn');
+    const passwordToggle = document.getElementById('passwordToggle');
+    const downloadProgress = document.getElementById('downloadProgress');
+    const progressInput = document.getElementById('progressInput');
+
+    // Confetti canvas
+    const confettiCanvas = document.getElementById('confetti');
+    const C = confettiCanvas.getContext('2d');
+    let confettiPieces = [];
+
+    // Accessibility: Enter to submit
+    answerInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') checkAnswer(); });
+
+    // Init
+    (function init(){
+      loadSettingsFromUI();
+      loadProgress();
+      bindUI();
+      // Try to fetch default vocab file from same folder
+      fetch(DEFAULT_VOCAB_FILE).then(r=>{
+        if(!r.ok) throw new Error('no file');
+        return r.text();
+      }).then(txt=>{
+        try{ const parsed = JSON.parse(txt); if(Array.isArray(parsed)) {vocab = normalizeVocab(parsed); refreshSections(); renderPreview(); return;} }
+        catch(e){}
+        // fallback: attempt to parse as TXT/MD
+        vocab = parseFreeform(txt);
+        refreshSections(); renderPreview();
+      }).catch(err=>{
+        // No file found -> use sample vocab
+        vocab = normalizeVocab([
+          {de:'Apfel',en:'apple',section:'Obst',example:'Ich esse einen ___.'},
+          {de:'laufen',en:'to run',section:'Verben',example:'Ich ___ schnell.'},
+          {de:'Haus',en:'house',section:'Allgemein',example:'Das ist mein ___.'}
+        ]);
+        refreshSections(); renderPreview();
+      });
+      resizeCanvas(); window.addEventListener('resize', resizeCanvas);
+      requestAnimationFrame(confettiLoop);
+    })();
+
+    function bindUI(){
+      checkBtn.addEventListener('click', checkAnswer);
+      skipBtn.addEventListener('click', skip);
+      showBtn.addEventListener('click', showAnswer);
+      startBtn.addEventListener('click', startSection);
+      fileInput.addEventListener('change', handleFileImport);
+      loadDefaultBtn.addEventListener('click', ()=>{ location.reload(); });
+      levTolerance.addEventListener('change', ()=>{settings.levTolerance = Number(levTolerance.value); saveProgress();});
+      caseSensitive.addEventListener('change', ()=>{settings.caseSensitive = caseSensitive.value==='1'; saveProgress();});
+      helpBtn.addEventListener('click', ()=>helpModal.style.display='flex');
+      closeHelp.addEventListener('click', ()=>helpModal.style.display='none');
+      importVokBtn.addEventListener('click', ()=>fileInput.click());
+      exportProgressBtn.addEventListener('click', ()=>downloadObjectAsJson(progress,'progress.json'));
+      importProgressBtn.addEventListener('click', ()=>progressInput.click());
+      progressInput.addEventListener('change', handleProgressImport);
+      passwordToggle.addEventListener('change', ()=>{settings.password = passwordToggle.value || null; saveProgress();});
+      downloadProgress.addEventListener('click', ()=>downloadObjectAsJson(progress,'progress.json'));
+      exportProgressBtn.addEventListener('click', ()=>downloadObjectAsJson(progress,'progress.json'));
+
+      // Update score display immediately
+      updateUI();
+    }
+
+    function loadSettingsFromUI(){
+      settings.levTolerance = Number(levTolerance.value) || DEFAULT_LEV_TOL;
+      settings.caseSensitive = caseSensitive.value==='1';
+      // password default null
+    }
+
+    // === Vocab parsing & normalization ===
+    function normalizeVocab(arr){
+      return arr.map((o,i)=>({de:String(o.de||o.german||o.word||'').trim(), en:String(o.en||o.english||'').trim(), section:String(o.section||o.group||'Allgemein').trim()||'Allgemein', example: String(o.example||'').trim(), _id:i}));
+    }
+
+    function parseFreeform(txt){
+      // Try JSON first
+      try{ const j=JSON.parse(txt); if(Array.isArray(j)) return normalizeVocab(j); }catch(e){}
+      const lines = txt.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      const out=[];
+      for(const line of lines){
+        // common patterns: de<TAB>en<TAB>section or de - en - section or markdown table
+        if(line.includes('\t')){
+          const parts=line.split('\t').map(p=>p.trim()); out.push({de:parts[0],en:parts[1]||'',section:parts[2]||'Allgemein',example:parts[3]||''}); continue;
+        }
+        if(line.includes(' - ')){
+          const parts=line.split(' - ').map(p=>p.trim()); out.push({de:parts[0],en:parts[1]||'',section:parts[2]||'Allgemein',example:parts[3]||''}); continue;
+        }
+        // markdown list like: - de: Apfel | en: apple | section: Obst
+        if(line.startsWith('- ') || line.startsWith('* ')){
+          const rest=line.replace(/^[-*]\s+/,'');
+          const parts=rest.split('|').map(p=>p.trim()); const obj={};
+          parts.forEach(p=>{ const [k,v]=p.split(':').map(x=>x.trim()); if(k && v) obj[k]=v; });
+          if(obj.de && obj.en) out.push({de:obj.de,en:obj.en,section:obj.section||'Allgemein',example:obj.example||''}); continue;
+        }
+        // fallback: try `de | en | section`
+        if(line.includes('|')){
+          const parts=line.split('|').map(p=>p.trim()); out.push({de:parts[0],en:parts[1]||'',section:parts[2]||'Allgemein',example:parts[3]||''}); continue;
+        }
+        // else: skip or treat as 'de - '
+      }
+      return normalizeVocab(out);
+    }
+
+    function handleFileImport(e){
+      const f = e.target.files[0]; if(!f) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        const txt = reader.result;
+        let parsed = parseFreeform(txt);
+        if(parsed.length===0) {
+          alert('Keine Vokabeln erkannt'); return;
+        }
+        vocab = parsed; refreshSections(); renderPreview(); saveProgress();
+        alert('Vokabeln importiert: ' + vocab.length);
+      };
+      reader.readAsText(f);
+      e.target.value='';
+    }
+
+    // === Sections & Queue mechanics ===
+    function refreshSections(){
+      const sections = Array.from(new Set(vocab.map(v=>v.section))).sort();
+      // populate select
+      sectionSelect.innerHTML = '';
+      const optAll = document.createElement('option'); optAll.value='__ALL__'; optAll.textContent='Alle'; sectionSelect.appendChild(optAll);
+      for(const s of sections){ const o=document.createElement('option'); o.value=s; o.textContent=s; sectionSelect.appendChild(o); }
+      updateRemaining();
+    }
+
+    function startSection(){
+      const chosen = sectionSelect.value;
+      queue = [];
+      if(chosen === '__ALL__'){
+        for(let i=0;i<vocab.length;i++) queue.push(i);
+      } else {
+        for(let i=0;i<vocab.length;i++) if(vocab[i].section===chosen) queue.push(i);
+      }
+      shuffle(queue);
+      updateCurrentSectionUI(chosen==='__ALL__'?'Alle':chosen);
+      nextCard();
+    }
+
+    function updateCurrentSectionUI(name){ document.getElementById('currentSection').textContent = name; }
+
+    function nextCard(){
+      if(queue.length===0){
+        // section complete
+        const completedSection = sectionSelect.value==='__ALL__'?'Alle':sectionSelect.value;
+        if(!progress.completedSections.includes(completedSection)){
+          progress.completedSections.push(completedSection);
+          awardBadge('Abgeschlossen: ' + completedSection);
+          triggerConfetti();
+        }
+        promptDe.textContent = 'Section abgeschlossen 🎉';
+        currentIdx = null; updateRemaining(); saveProgress(); return;
+      }
+      currentIdx = queue.shift();
+      const card = vocab[currentIdx];
+      promptDe.textContent = card.de;
+      answerInput.value=''; answerInput.focus(); updateRemaining(); saveProgress();
+    }
+
+    function updateRemaining(){ remainingCount.textContent = queue.length; scoreEl.textContent = progress.score || 0; renderBadges(); }
+
+    function skip(){ if(currentIdx===null) return; queue.push(currentIdx); feedback.textContent = 'Übersprungen — wird später wiederholt'; nextCard(); }
+
+    function showAnswer(){ if(currentIdx===null) return; const c = vocab[currentIdx]; feedback.innerHTML = `<div>Antwort: <strong>${c.en}</strong><div class="muted">Beispiel: ${c.example||'-'}</div></div>`; }
+
+    function checkAnswer(){ if(currentIdx===null) return; const user = answerInput.value.trim(); const correct = vocab[currentIdx].en.trim(); const caseOk = settings.caseSensitive ? user === correct : user.toLowerCase() === correct.toLowerCase();
+      if(user.length===0){ feedback.textContent='Bitte eine Antwort eingeben oder Überspringen.'; return; }
+      // Levenshtein distance
+      const dist = levenshtein(settings.caseSensitive ? user : user.toLowerCase(), settings.caseSensitive ? correct : correct.toLowerCase());
+      if(caseOk){ // exact match
+        progress.score = (progress.score||0) + 10; markCorrect(); feedback.innerHTML = '✅ Richtig! +10 Punkte'; nextCard(); saveProgress(); return;
+      }
+      // near correct
+      if(dist <= settings.levTolerance){ progress.score = (progress.score||0) + 5; markAlmost(); feedback.innerHTML = '✍️ Fast richtig (kleiner Rechtschreibfehler). +5 Punkte — Korrekte Antwort: ' + correct; // treat as correct: remove
+        nextCard(); saveProgress(); return; }
+      // wrong
+      progress.errors[ vocab[currentIdx]._id ] = (progress.errors[vocab[currentIdx]._id]||0) + 1;
+      feedback.innerHTML = '❌ Falsch — richtige Antwort: <strong>' + correct + '</strong>';
+      // push further back in queue (e.g., +5 Plätze)
+      const pushBack = Math.min(5, Math.max(1, Math.floor(queue.length*0.2))); // heuristic
+      const insertPos = Math.min(pushBack, queue.length);
+      queue.splice(insertPos,0,currentIdx);
+      saveProgress(); nextCard();
+    }
+
+    function markCorrect(){ // remove from future by not pushing back
+      // For 'richtig', do nothing since current card is consumed. We could mark per-section removal
+      const sec = vocab[currentIdx].section; // if all of this section gone, handled in nextCard
+    }
+    function markAlmost(){ /* handled similar to correct */ }
+
+    // === Progress save/load ===
+    function saveProgress(){
+      const toSave = { progress, settings, timestamp: new Date().toISOString(), vocabSummary: vocab.length };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      updateUI();
+    }
+    function loadProgress(){
+      const raw = localStorage.getItem(STORAGE_KEY); if(!raw) return;
+      try{ const parsed = JSON.parse(raw); if(parsed.progress) progress = parsed.progress; if(parsed.settings) Object.assign(settings,parsed.settings); updateUI(); }
+      catch(e){ console.warn('konnte progress nicht laden',e); }
+    }
+
+    function downloadObjectAsJson(obj, filename){ const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(obj,null,2)); const dl = document.createElement('a'); dl.setAttribute('href', dataStr); dl.setAttribute('download', filename); dl.click(); }
+
+    function handleProgressImport(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload=()=>{ try{ const j=JSON.parse(reader.result); if(j.progress) progress=j.progress; if(j.settings) Object.assign(settings,j.settings); saveProgress(); alert('Fortschritt importiert'); }catch(err){ alert('Ungültiges progress.json'); } }; reader.readAsText(f); e.target.value=''; }
+
+    // === UI helpers ===
+    function updateUI(){ scoreEl.textContent = progress.score || 0; renderBadges(); }
+    function renderBadges(){ badgesEl.innerHTML = ''; for(const b of (progress.badges||[])){ const d=document.createElement('div'); d.className='badge'; d.textContent=b; badgesEl.appendChild(d); } }
+
+    function awardBadge(name){ progress.badges = progress.badges || []; if(!progress.badges.includes(name)) progress.badges.push(name); saveProgress(); }
+
+    function renderPreview(){ vocabPreview.innerHTML=''; for(const v of vocab.slice(0,50)){ const el=document.createElement('div'); el.style.padding='6px 0'; el.innerHTML = `<strong>${v.de}</strong> → ${v.en} <span class="muted">[${v.section}]</span>`; vocabPreview.appendChild(el); } }
+
+    // === Utility functions ===
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+
+    // Levenshtein distance (digital-by-digit careful implementation)
+    function levenshtein(a,b){ // both strings
+      const n=a.length, m=b.length; if(n===0) return m; if(m===0) return n;
+      const dp = Array.from({length:n+1}, ()=>new Array(m+1));
+      for(let i=0;i<=n;i++) dp[i][0]=i;
+      for(let j=0;j<=m;j++) dp[0][j]=j;
+      for(let i=1;i<=n;i++){
+        const ai = a.charAt(i-1);
+        for(let j=1;j<=m;j++){
+          const cost = ai === b.charAt(j-1) ? 0 : 1;
+          dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost);
+        }
+      }
+      return dp[n][m];
+    }
+
+    // === Confetti (minimal) ===
+    function resizeCanvas(){ confettiCanvas.width = window.innerWidth; confettiCanvas.height = window.innerHeight; }
+    function triggerConfetti(){ // create pieces
+      const count = 80; for(let i=0;i<count;i++){ confettiPieces.push({x:Math.random()*confettiCanvas.width, y:-10 - Math.random()*200, vx:(Math.random()-0.5)*4, vy:Math.random()*3+2, size:Math.random()*6+4, rot:Math.random()*360, vr:(Math.random()-0.5)*10, color:null}); }
+    }
+    function confettiLoop(){ C.clearRect(0,0,confettiCanvas.width,confettiCanvas.height);
+      for(let i=confettiPieces.length-1;i>=0;i--){ const p=confettiPieces[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.rot+=p.vr; C.save(); C.translate(p.x,p.y); C.rotate(p.rot*Math.PI/180); C.fillStyle = `hsl(${(p.x+p.y)%360} 70% 60%)`; C.fillRect(-p.size/2,-p.size/2,p.size,p.size*0.6); C.restore(); if(p.y > confettiCanvas.height+50) confettiPieces.splice(i,1); }
+      requestAnimationFrame(confettiLoop);
+    }
+
+    // === Simple badge logic on score milestones ===
+    function checkMilestones(){ const s = progress.score||0; if(s>=50) awardBadge('50 Punkte'); if(s>=100) awardBadge('100 Punkte'); }
+
+    // Observe score changes
+    const scoreObserver = new MutationObserver(()=>checkMilestones()); scoreObserver.observe(scoreEl,{childList:true});
+
+    // === Import/Export shortcuts ===
+    function handleTextImport(raw){ const parsed = parseFreeform(raw); if(parsed.length>0){ vocab = parsed; refreshSections(); renderPreview(); saveProgress(); } }
+
+    // === Progress Export/Import buttons already bound above ===
+
+    // === Simple client-side password gating (OPTIONAL) ===
+    function isUnlocked(){ if(!settings.password) return true; const pw = localStorage.getItem(STORAGE_KEY + '_pw'); return pw === settings.password; }
+    function promptForPassword(){ if(!settings.password) return true; const attempt = prompt('Passwort erforderlich:'); if(attempt===settings.password){ localStorage.setItem(STORAGE_KEY + '_pw', attempt); return true; } alert('Falsches Passwort'); return false; }
+
+    // Example: protect Start
+    startBtn.addEventListener('click', ()=>{ if(settings.password && !isUnlocked()){ if(!promptForPassword()) return; } startSection(); });
+
+    // === handle progress auto-save on beforeunload ===
+    window.addEventListener('beforeunload', ()=>{ saveProgress(); });
+
+    // === handle external drag&drop for file import (optional) ===
+    window.addEventListener('dragover', e=>e.preventDefault()); window.addEventListener('drop', e=>{ e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) { const reader=new FileReader(); reader.onload=()=>handleTextImport(reader.result); reader.readAsText(f);} });
+
+    // When progress changes, keep UI updated
+    setInterval(()=>{ saveProgress(); updateUI(); }, 5000);
+
+    // === Helper: render remaining & update on every next ===
+    function updateRemaining(){ if(queue) remainingCount.textContent = queue.length; scoreEl.textContent = progress.score || 0; }
+
+    // === Load progress button finished (duplicated binding safe) ===
+
+    // Small safety: limit JS errors from breaking core
+    window.addEventListener('error', (e)=>{ console.error(e); });
+  </script>
+</body>
+</html>
